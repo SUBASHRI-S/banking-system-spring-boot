@@ -1,51 +1,64 @@
-# banking-system-spring-boot
+# BankSim: Banking REST API
 
-Simulated banking REST API: JWT security, atomic and concurrency-safe transfers, PostgreSQL, Docker, CI.
-**Fictional data only. No real money, no real bank APIs.**
+[![CI](https://github.com/SUBASHRI-S/banking-system-spring-boot/actions/workflows/ci.yml/badge.svg)](https://github.com/SUBASHRI-S/banking-system-spring-boot/actions/workflows/ci.yml)
+![Java 21](https://img.shields.io/badge/Java-21-blue)
+![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-brightgreen)
+![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16-blue)
 
-Stack: Java 21, Spring Boot 3.5, Spring Security 6 (JWT, OAuth2 Resource Server), Spring Data JPA, PostgreSQL 16, Flyway, springdoc (Swagger UI), JUnit 5, Mockito, Testcontainers, JaCoCo, Docker, GitHub Actions.
+A simulated online banking backend built with Spring Boot. It focuses on the hard parts of a money system: **atomic transfers, concurrency safety, and secure access to accounts**, and it proves them with tests that run against a real PostgreSQL database.
 
-The full design (requirements, ER diagram, transfer sequence, decisions D1 to D7) is in [`docs/DESIGN.md`](docs/DESIGN.md).
+> Fictional data only. Currency INR. No real money and no real bank APIs.
 
-## Verification status (read this first)
+## Highlights
 
-This project was written from the design document in an environment with no access to Maven Central and no Docker daemon, so **it has not been compiled or run yet**. Treat everything as unverified until you have seen it pass yourself:
+- **Atomic transfers.** A transfer is one database transaction. If any step fails, neither balance changes.
+- **Deadlock-free concurrency.** Both account rows are locked with `SELECT ... FOR UPDATE`, always the lower account id first. 50 simultaneous transfers in opposite directions finish with no deadlocks; the same run with naive locking produced 46 (see `scripts/verify-locking.sh`).
+- **Ledger integrity.** Every money movement writes a ledger entry. An account's balance always equals the sum of its ledger entries, and is checked by a test.
+- **Defence in depth.** `CHECK (balance >= 0)` in the database acts as a last safety net, even if application code has a bug.
+- **JWT security.** Stateless authentication with Spring Security, BCrypt password hashing, roles (`USER`, `ADMIN`), and ownership checks on every account operation.
+- **Idempotent transfers and daily limits.** The same `Idempotency-Key` creates only one transfer; outgoing transfers per account per day are capped.
+- **One error format.** Every error returns the same JSON shape and never exposes a stack trace.
 
-- [ ] `mvn verify` is green on my machine
-- [ ] `docker compose up --build` starts and `/actuator/health` returns `UP`
-- [ ] `scripts/smoke-test.sh` runs clean against the local instance
-- [ ] CI is green on `main`
-- [ ] Deployed demo answers on its public URL
+## Tech stack
 
-Checked so far (29 Oct 2026, PostgreSQL 16, no Java build possible in that environment):
-- Flyway migrations V1 to V4 apply cleanly on a fresh PostgreSQL 16 database.
-- `scripts/verify-locking.sh`: with lowest-id-first locking, 50 simultaneous A/B and B/A transfers gave 0 deadlocks and unchanged balances; with naive source-first locking the same run gave 46 deadlock errors; `CHECK (balance >= 0)` rejected a negative balance.
-- All Java sources parse with `javac` (no syntax errors). Dependency resolution, compilation and the Spring tests were NOT run.
+Java 21 · Spring Boot 3.5 · Spring Security 6 (OAuth2 Resource Server, JWT) · Spring Data JPA / Hibernate · PostgreSQL 16 · Flyway · springdoc OpenAPI (Swagger UI) · JUnit 5 · Mockito · Testcontainers · JaCoCo · Docker · GitHub Actions
 
-Coverage:  After `mvn verify`, open `target/site/jacoco/index.html` and write down the real number here: '91 %'`.
+## Quality
 
-## Quick start (Docker, nothing else to install)
+| Check | Result |
+|---|---|
+| Tests | 36 (unit, API, integration, concurrency) |
+| Test run | `mvn verify` passes locally and in CI |
+| Coverage | 91% instructions, 77% branches (JaCoCo, 30 Oct 2026) |
+| Database | Tests run against real PostgreSQL 16 via Testcontainers, not H2 |
+
+## Quick start
+
+Requires Docker only.
 
 ```bash
-git clone <your-repo-url> && cd banking-system-spring-boot
-cp .env.example .env            # optional; compose has fake local defaults
+git clone https://github.com/SUBASHRI-S/banking-system-spring-boot.git
+cd banking-system-spring-boot
+cp .env.example .env          # optional, compose has safe local defaults
 docker compose up --build
 ```
 
-- Swagger UI: <http://localhost:8080/swagger-ui.html> (also reachable from `/`)
-- Health: <http://localhost:8080/actuator/health>
+| | URL |
+|---|---|
+| Swagger UI | http://localhost:8080/swagger-ui.html |
+| Health | http://localhost:8080/actuator/health |
 
-To get an ADMIN user (needed to try freeze/unfreeze) set `SEED_ADMIN_PASSWORD` in `.env` before starting. The admin email defaults to `admin@example.com`. If the variable is empty, no admin is created. No password is stored in Git.
+To create an `ADMIN` user (needed for freeze and unfreeze), set `SEED_ADMIN_PASSWORD` in `.env` before starting. The admin email defaults to `admin@example.com`. No password is stored in Git.
 
-Try it without any tool:
+### Try the API
 
-```bash
-./scripts/smoke-test.sh          # needs curl and jq
-```
+1. `POST /api/v1/auth/register`, then `POST /api/v1/auth/login`.
+2. Click **Authorize** in Swagger UI and paste the `accessToken`.
+3. Open an account, deposit, and transfer.
 
-or import `postman/banksim.postman_collection.json` into Postman and run the folders in order.
+Or run `./scripts/smoke-test.sh` (needs `curl` and `jq`), or import `postman/banksim.postman_collection.json` into Postman.
 
-## Run without Docker
+### Run without Docker
 
 Needs Java 21, Maven 3.9+ and a PostgreSQL 16 database.
 
@@ -53,104 +66,119 @@ Needs Java 21, Maven 3.9+ and a PostgreSQL 16 database.
 export DB_URL=jdbc:postgresql://localhost:5432/bank
 export DB_USERNAME=bank
 export DB_PASSWORD=bank
-export JWT_SECRET="$(openssl rand -base64 48)"     # at least 32 characters, or the app refuses to start
+export JWT_SECRET="$(openssl rand -base64 48)"   # at least 32 characters
 mvn spring-boot:run
 ```
 
-Optional: generate the Maven wrapper once with `mvn -N wrapper:wrapper`, then use `./mvnw` instead of `mvn`.
+## API
 
-## Tests
+Base path `/api/v1`.
 
-```bash
-mvn verify          # unit tests + Testcontainers integration tests + JaCoCo report
+| Method | Path | Access |
+|---|---|---|
+| POST | `/auth/register`, `/auth/login` | Public |
+| GET, POST | `/accounts` | User |
+| GET | `/accounts/{id}` | User (owner) |
+| POST | `/accounts/{id}/deposit`, `/accounts/{id}/withdraw` | User (owner) |
+| POST | `/transfers` (optional `Idempotency-Key` header) | User (owner of source account) |
+| GET | `/accounts/{id}/transactions` (`page`, `size`, `type`, `from`, `to`) | User (owner) |
+| GET | `/admin/accounts` | Admin |
+| PATCH | `/admin/accounts/{id}/status` | Admin |
+| GET | `/actuator/health` | Public |
+
+Errors share one shape: `type`, `title`, `status`, `detail`, `code`, `timestamp`, `path` (plus `errors` for field validation).
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `VALIDATION_ERROR`, `SAME_ACCOUNT` | 400 | Invalid request |
+| `UNAUTHORIZED` | 401 | Missing, invalid or expired token, or bad login |
+| `FORBIDDEN` | 403 | Wrong role |
+| `ACCOUNT_NOT_FOUND` | 404 | Missing, or not yours (existence is never revealed) |
+| `DUPLICATE_EMAIL`, `ACCOUNT_FROZEN` | 409 | Conflict |
+| `INSUFFICIENT_FUNDS`, `DAILY_LIMIT_EXCEEDED`, `IDEMPOTENCY_KEY_REUSED` | 422 | Rule violation |
+| `INTERNAL_ERROR` | 500 | Unexpected error (details only in logs) |
+
+## Architecture
+
+```
+Client (Swagger UI / Postman)
+   -> Security filter chain (JWT validation)
+   -> Controllers  (REST + validation)
+   -> Services     (business rules + transactions)
+   -> Repositories (Spring Data JPA)
+   -> PostgreSQL   (schema managed by Flyway)
 ```
 
-Integration tests start a real PostgreSQL 16 in Docker, so **Docker must be running**. Reports: `target/surefire-reports`, coverage: `target/site/jacoco/index.html`.
+Controllers never touch repositories; services own all business rules and `@Transactional`. Code is organised by feature: `auth`, `user`, `account`, `transaction`, `transfer`, with shared code in `common` and `config`.
 
-| Test ID | Class | What it proves |
+Full design, ER diagram, transfer sequence and decisions: [`docs/DESIGN.md`](docs/DESIGN.md). Requirement-to-code-to-test mapping: [`docs/TRACEABILITY.md`](docs/TRACEABILITY.md).
+
+## Key design decisions
+
+| Decision | Why |
+|---|---|
+| `NUMERIC(19,2)` and `BigDecimal` for money, never `double` | Exact decimal arithmetic |
+| Pessimistic row locks, lowest id first | No lost updates, no deadlocks between opposite transfers |
+| Flyway migrations instead of `ddl-auto` | Versioned, reproducible schema |
+| Testcontainers instead of H2 | Locking and constraints behave differently in H2 |
+| 404 instead of 403 for other users' accounts | Does not reveal whether an account exists |
+| CSRF disabled | The API is stateless and uses a Bearer header, not cookies |
+
+## Testing
+
+```bash
+mvn verify      # unit + integration tests + coverage report (Docker must be running)
+```
+
+Coverage report: `target/site/jacoco/index.html`.
+
+| Area | Test classes |
+|---|---|
+| Business rules (no database) | `AccountServiceTest`, `TransferServiceTest`, `MoneyTest`, `LedgerSummaryTest` |
+| HTTP behaviour through the security chain | `ApiFlowIT` |
+| Ledger equals balance, rollback on failure, frozen accounts | `LedgerIntegrityIT` |
+| 50 parallel transfers, opposite-direction transfers without deadlock | `ConcurrentTransferIT` |
+| Idempotency key and daily limit | `AdvancedTransferIT` |
+
+## Configuration
+
+| Variable | Default | Secret |
 |---|---|---|
-| T-UNIT-01..04 | `AccountServiceTest`, `TransferServiceTest`, `MoneyTest` | Business rules without a database |
-| T-API-01..06 | `ApiFlowIT` | HTTP behaviour through the real security chain |
-| T-INT-01..03 | `LedgerIntegrityIT` | Ledger equals balance, rollback on failure, frozen accounts |
-| T-CON-01..02 | `ConcurrentTransferIT` | 50 parallel transfers; A to B and B to A at once, no deadlock |
-| T-ADV-01..02 | `AdvancedTransferIT` | Idempotency key, daily limit |
-
-Requirement to code to test mapping: [`docs/TRACEABILITY.md`](docs/TRACEABILITY.md).
-
-## API (base path `/api/v1`)
-
-| Method | Path | Auth |
-|---|---|---|
-| POST | `/auth/register`, `/auth/login` | none |
-| GET / POST | `/accounts` | USER |
-| GET | `/accounts/{id}` | USER (owner) |
-| POST | `/accounts/{id}/deposit`, `/accounts/{id}/withdraw` | USER (owner) |
-| POST | `/transfers` (optional `Idempotency-Key` header) | USER (owner of source) |
-| GET | `/accounts/{id}/transactions?page=&size=&type=&from=&to=` | USER (owner) |
-| GET | `/admin/accounts` | ADMIN |
-| PATCH | `/admin/accounts/{id}/status` | ADMIN |
-| GET | `/actuator/health` | none |
-
-Every error has one shape: `type`, `title`, `status`, `detail`, `code`, `timestamp`, `path` (plus `errors` for field validation).
-Codes: `VALIDATION_ERROR` 400, `SAME_ACCOUNT` 400, `UNAUTHORIZED` 401, `FORBIDDEN` 403, `ACCOUNT_NOT_FOUND` 404, `DUPLICATE_EMAIL` 409, `ACCOUNT_FROZEN` 409, `INSUFFICIENT_FUNDS` 422, `DAILY_LIMIT_EXCEEDED` 422, `IDEMPOTENCY_KEY_REUSED` 422, `INTERNAL_ERROR` 500.
-
-## Configuration (environment variables)
-
-| Name | Default | Secret? |
-|---|---|---|
-| `JWT_SECRET` | none, **required**, 32+ chars | yes |
+| `JWT_SECRET` | none (required, 32+ characters) | yes |
 | `DB_URL` | `jdbc:postgresql://localhost:5432/bank` | no |
-| `DB_USERNAME` / `DB_PASSWORD` | `bank` / `bank` (local only) | yes |
-| `SPRING_PROFILES_ACTIVE` | none (`prod` on the host) | no |
-| `PORT` | `8080` | no |
-| `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | `admin@example.com` / empty (no admin) | password: yes |
+| `DB_USERNAME`, `DB_PASSWORD` | `bank` / `bank` (local only) | yes |
+| `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | `admin@example.com` / empty (no admin) | password: yes |
 | `DAILY_TRANSFER_LIMIT` | `100000.00` | no |
-| `JAVA_TOOL_OPTIONS` | `-XX:MaxRAMPercentage=70 -XX:+UseSerialGC` | no |
+| `PORT` | `8080` | no |
 
-Never commit `.env`. Real values live only in the host's dashboard.
+Never commit `.env`. Real values belong only in the hosting dashboard.
 
-## Deploy for free: Render + Neon
+## Deployment
 
-Free-tier terms change; re-check [Render](https://render.com/docs/free) and [Neon](https://neon.com/docs/introduction/plans) before you start.
+The repository includes a `Dockerfile` and a `render.yaml` Blueprint for [Render](https://render.com), paired with a free [Neon](https://neon.com) PostgreSQL database.
 
-1. **Database (Neon):** create a free project and database. Use the **direct** (non-pooled) connection details. Convert them to JDBC form:
-   `DB_URL=jdbc:postgresql://<host>/<database>?sslmode=require`, with `DB_USERNAME` and `DB_PASSWORD` as separate values (JDBC does not accept the `postgresql://user:pass@host` form).
-2. **App (Render):** push this repo to GitHub, then Render > New > Blueprint > select the repo. `render.yaml` creates a Docker web service on the free plan with health check `/actuator/health`.
-3. In the Render dashboard set `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`. `JWT_SECRET` is generated for you. Optionally set `SEED_ADMIN_PASSWORD`.
-4. Deploy, then run `./scripts/smoke-test.sh https://<your-service>.onrender.com`.
+1. Create a Neon database and use the **direct** (non-pooled) connection. Convert it to JDBC form: `jdbc:postgresql://<host>/<database>?sslmode=require`, with the username and password as separate values.
+2. On Render choose **New > Blueprint** and select this repository.
+3. Set `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` and, optionally, `SEED_ADMIN_PASSWORD`. `JWT_SECRET` is generated automatically.
+4. Check `https://<your-service>.onrender.com/actuator/health`.
 
-Honest consequences (put the live link and this note on your resume/README):
-- The free web service sleeps after about 15 minutes idle. **The first request can take about 60 seconds.**
-- Neon free compute also sleeps when idle, so the first database call after a pause is slower (the prod profile allows 60 s for it).
-- Whether the JVM fits in the free instance's memory is **unverified**. Test it. If it runs out of memory, lower `MaxRAMPercentage`, add `-XX:TieredStopAtLevel=1`, or fall back to `docker compose` for demos.
+On free hosting the service sleeps after about 15 minutes idle, so the first request after a pause can take around a minute.
 
-## Design notes worth knowing for interviews
-
-- **Money:** `NUMERIC(19,2)` in the database, `BigDecimal` in Java, never `double`. At most 2 decimals, enforced in `Money.validate`.
-- **Atomic transfer:** one `@Transactional` method (`TransferService`). A failure after the balances change rolls everything back (T-INT-02).
-- **No lost updates / no deadlock:** `SELECT ... FOR UPDATE` on both rows, lowest account id first. The rows are locked before they are loaded into the persistence context, so balances are never stale (this is why the earlier checks use scalar `exists`/id queries).
-- **Last safety net:** `CHECK (balance >= 0)` in the database.
-- **404 not 403** for other people's accounts, so their existence is not leaked.
-- **CSRF disabled** because the API is stateless and uses a Bearer header, not cookies.
-- **Idempotency:** same `Idempotency-Key` returns the first result; duplicates queue on the source row lock, so even simultaneous duplicates create one transfer.
-
-## Known limitations
+## Limitations
 
 - Simulated only; no real money, no real compliance.
 - Single instance; no caching or messaging.
-- Free hosting sleeps when idle.
 - No refresh tokens and no rate limiting.
-- Optional static dashboard (milestone M9) and the Spring Boot 4.1 migration (M10) are not included. Swagger UI and Postman are the front end.
-- Spring Boot 3.5 no longer gets free patches (see D1 in the design doc). Use the latest 3.5.x patch, and consider M10.
+- Free hosting sleeps when idle.
+- Spring Boot 3.5 no longer receives free patch releases; migrating to Boot 4 is a possible next step.
 
-## Repo layout
+## Repository layout
 
 ```
-src/main/java/com/banksim/{config,common,auth,user,account,transaction,transfer}
-src/main/resources/db/migration/V1..V4   Flyway migrations
-src/test/java/com/banksim                unit + Testcontainers tests
-docs/                                    DESIGN, TRACEABILITY, TROUBLESHOOTING
-postman/                                 Postman collection (success and failure cases)
-scripts/smoke-test.sh                    curl end-to-end check
-Dockerfile, docker-compose.yml, render.yaml, .github/workflows/ci.yml
+src/main/java/com/banksim/   application code (config, common, auth, user, account, transaction, transfer)
+src/main/resources/db/       Flyway migrations V1 to V4
+src/test/java/com/banksim/   unit and Testcontainers tests
+docs/                        design, traceability, troubleshooting
+postman/                     Postman collection (success and failure cases)
+scripts/                     smoke test and locking verification
 ```
