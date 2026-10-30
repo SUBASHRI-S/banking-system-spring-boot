@@ -1,0 +1,36 @@
+# docker compose up --build
+# Swagger UI: http://localhost:8080/swagger-ui.html   Health: http://localhost:8080/actuator/health
+#
+# The defaults below are for LOCAL DEMO ONLY (fake values, not secrets). Copy .env.example to .env to override.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: ${DB_USERNAME:-bank}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-bank}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/bank
+      DB_USERNAME: ${DB_USERNAME:-bank}
+      DB_PASSWORD: ${DB_PASSWORD:-bank}
+      JWT_SECRET: ${JWT_SECRET:-local-demo-only-change-me-0123456789abcdef}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@example.com}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+
+volumes:
+  pgdata:

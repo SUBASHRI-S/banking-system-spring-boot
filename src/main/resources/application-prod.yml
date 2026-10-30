@@ -1,0 +1,16 @@
+server:
+  forward-headers-strategy: framework
+
+spring:
+  datasource:
+    hikari:
+      # Neon free compute sleeps after idle; give the first connection time to wake it.
+      connection-timeout: 60000
+      maximum-pool-size: ${DB_POOL_SIZE:5}
+  flyway:
+    connect-retries: 10
+
+logging:
+  level:
+    root: INFO
+    org.hibernate.SQL: WARN
