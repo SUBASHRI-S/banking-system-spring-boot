@@ -8,7 +8,7 @@ COPY src ./src
 RUN mvn -B -q -DskipTests package
 
 # ---- run stage ----
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:24-jre
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl \
  && rm -rf /var/lib/apt/lists/* \
