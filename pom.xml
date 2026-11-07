@@ -22,7 +22,7 @@
     <springdoc.version>2.8.13</springdoc.version>
     <!-- Newer Testcontainers than the Boot default: older ones fail against Docker Engine 29. -->
     <testcontainers.version>1.21.4</testcontainers.version>
-    <jacoco.version>0.8.13</jacoco.version>
+    <jacoco.version>0.8.16</jacoco.version>
     <archunit.version>1.3.0</archunit.version>
   </properties>
 
