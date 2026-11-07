@@ -22,11 +22,15 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+logging:
+  pattern:
+    correlation: "[%X{requestId:-}] "
+
 management:
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,metrics,prometheus
   endpoint:
     health:
       show-details: never
@@ -36,6 +40,11 @@ springdoc:
     path: /swagger-ui.html
 
 app:
+  security:
+    max-login-failures: ${MAX_LOGIN_FAILURES:5}
+    lockout-seconds: ${LOCKOUT_SECONDS:900}
+  reconciliation:
+    cron: ${RECONCILIATION_CRON:0 0 2 * * *}
   jwt:
     secret: ${JWT_SECRET}      # no default on purpose: startup fails if missing or shorter than 32 chars
     expiry-seconds: 900

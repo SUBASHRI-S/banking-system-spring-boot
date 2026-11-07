@@ -1,19 +1,18 @@
 package com.banksim;
 
-import java.math.BigDecimal;
-
-import org.junit.jupiter.api.AfterEach;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.banksim.account.AccountStatus;
 import com.banksim.account.dto.AccountResponse;
 import com.banksim.common.AccountFrozenException;
 import com.banksim.user.Role;
 import com.banksim.user.User;
+import java.math.BigDecimal;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /** Integration tests against real PostgreSQL: ledger integrity, rollback and frozen accounts. */
 class LedgerIntegrityIT extends AbstractIntegrationTest {

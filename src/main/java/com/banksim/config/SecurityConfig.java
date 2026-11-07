@@ -38,6 +38,8 @@ public class SecurityConfig {
                                 "/actuator/health", "/actuator/health/**",
                                 "/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs", "/v3/api-docs/**").permitAll()
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
+                        // metrics and anything else exposed under /actuator is for operators only (health is public above)
+                        .requestMatchers("/actuator/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .exceptionHandling(e -> e
                         .authenticationEntryPoint(entryPoint)

@@ -1,24 +1,25 @@
-# Troubleshooting log
+# Troubleshooting
 
-Rule from the design document: **only real problems you solved yourself.** Nothing has been invented here. Add an entry each time you hit and fix something.
+Problems encountered while building and running the project, with cause and fix.
 
-Template:
+## Tests fail with `invalid value for parameter "TimeZone": "Asia/Calcutta"`
+**Cause.** The PostgreSQL JDBC driver sends the JVM's default time zone; the `postgres:16` image rejects the legacy name `Asia/Calcutta`.
+**Fix.** Force UTC: `-Duser.timezone=UTC` in the Surefire `argLine`, `TimeZone.setDefault(UTC)` in `AbstractIntegrationTest` and in `BankSimApplication.main`.
+**Verified.** `mvn verify` passes on a machine in the Asia/Kolkata time zone.
 
-```
-## <short title>  (date)
-Symptom:
-Cause:
-Fix:
-How I verified:
-```
+## Mockito cannot call the real method of a spied Spring Data repository
+**Symptom.** `doCallRealMethod` on a repository spy fails with an abstract-method error.
+**Cause.** Spring Data repositories are proxies over interfaces, so there is no real method to call.
+**Fix.** `LedgerIntegrityIT` now makes the transfer fail midway with a temporary PostgreSQL trigger that raises an exception for one specific ledger amount, then asserts that both balances and the ledger are unchanged. It is a more realistic failure than a mock.
 
----
+## Testcontainers cannot reach Docker, or reports an old client version
+Docker must be running. `pom.xml` pins `testcontainers.version` to 1.21.4 because the version managed by Spring Boot fails against Docker Engine 29.
 
-## Things that may bite on a first run (not yet encountered, listed as places to look)
+## Application refuses to start and mentions `app.jwt.secret`
+`JWT_SECRET` is missing or shorter than 32 characters. This is intentional: there is no default secret.
 
-These are checks, not solved problems. Move one into a real entry only after it actually happens to you.
+## Neon connection errors
+Use the direct (non-pooled) connection in JDBC form with `sslmode=require`, and allow a few seconds for the compute to wake up.
 
-- **Testcontainers cannot reach Docker / "client version is too old":** Docker must be running. `pom.xml` sets `testcontainers.version` to a release newer than the Spring Boot default because older ones fail against Docker Engine 29. If that version cannot be resolved, use the newest 1.21.x or 2.x release from Maven Central.
-- **`@MockitoSpyBean` on the repository in `LedgerIntegrityIT`:** if Mockito refuses to spy on the Spring Data proxy, the alternative is to break the transfer midway another way (for example a test-only failing `TransferProperties`/`Clock` bean) while keeping the same assertions.
-- **App refuses to start with a message about `app.jwt.secret`:** `JWT_SECRET` is missing or shorter than 32 characters. That is intentional.
-- **Neon connection errors:** use the direct connection, `sslmode=require`, JDBC URL form, and allow time for the compute to wake.
+## Dependabot pull requests fail CI
+Pull requests that jump Spring Boot to 4.x or springdoc to 3.x need a coordinated migration and are not merged individually.

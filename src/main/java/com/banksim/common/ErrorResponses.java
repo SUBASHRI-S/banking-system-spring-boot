@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 
@@ -24,6 +25,10 @@ public final class ErrorResponses {
         body.put("code", code);
         body.put("timestamp", Instant.now().toString());
         body.put("path", path);
+        String requestId = MDC.get("requestId");
+        if (requestId != null) {
+            body.put("requestId", requestId);
+        }
         return body;
     }
 

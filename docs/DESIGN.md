@@ -1,46 +1,27 @@
-# Online Banking Simulation System: Requirements and Architecture
+# Design
 
-**Role in the set:** Project 1 of 5. Backend depth: transactions, concurrency, security
-**Status:** Planned. Nothing in this file is verified yet. If you already have partial code, compare it with this file first (Milestone M0).
-**Last researched:** 22 Oct 2026
+Technical design of BankSim, a simulated online banking backend. Requirement IDs (`BANK-FR-xx`, `BANK-NFR-xx`) are referenced from the tests and from [`TRACEABILITY.md`](TRACEABILITY.md). Newer decisions are recorded in [`adr/`](adr), and the layered view with diagrams is in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-> How to use this file: keep it in the repo as `docs/DESIGN.md`. Every requirement has an ID (like `BANK-FR-05`). Tests, README and resume claims must point back to these IDs. Tick a box only when you have run it and seen the result yourself.
+## 1. Problem and scope
 
----
+Customers need to hold money in accounts and move it safely. The main risks are lost updates (two requests overwrite each other), half-completed transfers, unauthorised access to other customers' accounts, and balances that silently drift from the underlying records. BankSim addresses these with database transactions, row-level locking, ownership checks, an immutable audit trail and an independent reconciliation job. All data is fictional, the currency is INR, and no real payment systems are involved.
 
-## 0. Decisions already made (do not reopen without a reason)
+**Roles.** Customer (`USER`): registers, opens accounts, deposits, withdraws, transfers, views history. Administrator (`ADMIN`): lists and freezes accounts, reads the audit trail, runs reconciliation.
 
-| # | Decision | Why | Trade-off |
-|---|---|---|---|
-| D1 | Java 21, Spring Boot **3.5.x (latest patch)**, Maven, PostgreSQL 16 | Java 21 is a long-term-support release and Boot 3.x is still widely used. | Boot 3.5 stopped getting free patches on 30 Jun 2026; Boot 4.1 is current. Migration to 4.1 is an optional last milestone (M10) and becomes a good proof-of-work item. |
-| D2 | JWT login with Spring Security | Appears in senior postings (Citi lists it) and is a common interview topic | More to learn than basic auth |
-| D3 | Pessimistic row locking for transfers, locks taken in ascending account-id order | Money must never be lost or duplicated, and ordered locking prevents deadlock | Slower under heavy load than optimistic locking; fine for this scale |
-| D4 | Flyway for database migrations | Shows schema changes are versioned and reproducible | One more tool |
-| D5 | Testcontainers (real PostgreSQL) for integration tests | H2 behaves differently from PostgreSQL on locking and constraints | Needs Docker running locally |
-| D6 | Swagger UI + Postman are the main "frontend"; a small static dashboard is optional (M9) | Employers evaluate the backend. A custom UI costs time and adds little proof. | Less visual for non-technical viewers |
-| D7 | Fictional data only; currency INR; no real bank APIs | Safe and honest | None |
+**Out of scope.** Real payments, KYC, notifications, microservices, message brokers, mobile client.
 
----
+## 2. Key technology decisions
 
-## 1. Problem statement
+| Decision | Rationale | Trade-off |
+|---|---|---|
+| Java 21, Spring Boot 3.5, Maven, PostgreSQL 16 | Long-term-support Java; widely used Boot 3 line | Boot 3.5 open-source support has ended; migration to Boot 4 is a planned follow-up |
+| JWT with Spring Security (OAuth2 Resource Server) | Stateless, standard, no hand-written crypto | Short-lived tokens only; no refresh tokens |
+| Pessimistic row locks, ascending account id | No lost updates; removes the deadlock cycle ([ADR 0001](adr/0001-pessimistic-locking.md)) | Hot accounts are serialised |
+| Flyway migrations | Versioned, reproducible schema | One more tool |
+| Testcontainers with real PostgreSQL | Locking and constraints differ in H2 | Needs Docker to run tests |
+| Swagger UI and Postman as the client | The value is in the backend | No custom UI |
 
-People need to hold money in accounts and move it safely. The risks are lost updates (two requests overwrite each other), half-completed transfers, and users reading or changing other people's accounts. This project is a **simulated** bank backend that solves those problems and can prove it with tests.
-
-**Users**
-- **Customer (USER):** registers, opens accounts, deposits, withdraws, transfers, views history.
-- **Administrator (ADMIN):** lists accounts and freezes or unfreezes them.
-
-**Scope**
-
-| Level | Features |
-|---|---|
-| **MVP** | Register/login, accounts, deposit, withdraw, atomic transfer, transaction history with pagination, admin freeze, consistent errors, tests, Docker, CI, deployment |
-| **Advanced (only after MVP is done and verified)** | Idempotency key on transfers, daily transfer limit, account statement export (CSV), audit log, optional static dashboard |
-| **Out of scope** | Real payments, real KYC, notifications, microservices, Kafka, Kubernetes, mobile app |
-
----
-
-## 2. Functional requirements and acceptance criteria
+## 3. Functional requirements
 
 | ID | Requirement | Acceptance criteria |
 |---|---|---|
@@ -54,36 +35,26 @@ People need to hold money in accounts and move it safely. The risks are lost upd
 | BANK-FR-08 | Transaction history | Paginated, newest first, filterable by type and date range. Only for my own accounts. |
 | BANK-FR-09 | Freeze/unfreeze (ADMIN) | A FROZEN account rejects deposits, withdrawals and transfers with 409 `ACCOUNT_FROZEN`. Only ADMIN can change status; a USER gets 403. |
 | BANK-FR-10 | Consistent errors | Every error uses one JSON shape (section 8) and never shows a stack trace. |
-| BANK-FR-11 (adv.) | Idempotent transfer | Sending the same `Idempotency-Key` twice creates one transfer and returns the same result. |
-| BANK-FR-12 (adv.) | Daily limit | Total outgoing transfers per account per day cannot exceed a configured limit. |
+| BANK-FR-11  | Idempotent transfer | Sending the same `Idempotency-Key` twice creates one transfer and returns the same result. |
+| BANK-FR-12 | Daily limit | Total outgoing transfers per account per day cannot exceed a configured limit. |
+| BANK-FR-13 | Audit trail | Registration, login, transfer and admin status changes are recorded with outcome, actor and request id, including rejected attempts. Rows cannot be updated or deleted (database trigger). Admin read endpoint. |
+| BANK-FR-14 | Reconciliation | Every balance is recomputed from the ledger nightly and on demand; any difference is reported and exposed as a metric. |
 
-## 3. Non-functional requirements
+## 4. Non-functional requirements
 
-| ID | Requirement | How to check |
+| ID | Requirement | Verified by |
 |---|---|---|
-| BANK-NFR-01 | **Correctness:** sum of ledger entries for an account always equals its balance | Integrity test (T-INT-01) |
-| BANK-NFR-02 | **Concurrency safety:** parallel transfers never lose money or deadlock | Concurrency tests (T-CON-01, T-CON-02) |
-| BANK-NFR-03 | **Security:** no secrets in Git; passwords hashed; every endpoint except register/login/health needs a valid JWT | Secret scan, security tests |
-| BANK-NFR-04 | **Reproducibility:** a stranger can run it with `docker compose up` | Clean-clone test |
-| BANK-NFR-05 | **Observability:** `/actuator/health` works; logs never contain passwords or tokens | Manual check, log review |
-| BANK-NFR-06 | **Maintainability:** CI runs build and tests on every push | Green workflow run |
+| BANK-NFR-01 | **Correctness:** sum of ledger entries for an account always equals its balance | `LedgerIntegrityIT` |
+| BANK-NFR-02 | **Concurrency safety:** parallel transfers never lose money or deadlock | `ConcurrentTransferIT` |
+| BANK-NFR-03 | **Security:** no secrets in Git; passwords hashed; every endpoint except register/login/health needs a valid JWT | Secret scanning, `ApiFlowIT` |
+| BANK-NFR-04 | **Reproducibility:** a stranger can run it with `docker compose up` | Clean-clone `docker compose up` |
+| BANK-NFR-05 | **Observability:** `/actuator/health` works; logs never contain passwords or tokens | `ApiFlowIT`, log review |
+| BANK-NFR-06 | **Maintainability:** CI runs build and tests on every push | CI workflow |
+| BANK-NFR-07 | **Brute-force protection:** repeated failed logins are rejected with 429 | `LoginThrottleIT` |
+| BANK-NFR-08 | **Operational visibility:** request ids, transfer metrics | `ObservabilityIT` |
+| BANK-NFR-09 | **Architecture enforced:** layering rules fail the build when broken | `ArchitectureTest` |
 
 ---
-
-## 4. Technology stack
-
-| Area | Choice | Notes |
-|---|---|---|
-| Language/runtime | Java 21 | LTS version |
-| Framework | Spring Boot 3.5.x | Use the latest 3.5 patch from start.spring.io and pin it in `pom.xml` |
-| Web | Spring Web (REST), Bean Validation | |
-| Data | Spring Data JPA (Hibernate), PostgreSQL 16, Flyway | Schema comes from migrations, not `ddl-auto` |
-| Security | Spring Security 6, BCrypt, JWT via Spring's OAuth2 Resource Server (Nimbus) | Official, fewer hand-written crypto pieces. `jjwt` is the common alternative if you prefer a custom filter. |
-| API docs | springdoc-openapi 2.x (Boot 3 line) | Check its compatibility table when you pick the version |
-| Tests | JUnit 5, Mockito, Spring Boot Test, MockMvc, Testcontainers, JaCoCo | |
-| Build/CI | Maven, GitHub Actions | Free for public repos |
-| Container | Docker (multi-stage), Docker Compose | |
-| Hosting | See section 12 | |
 
 ---
 
@@ -94,7 +65,6 @@ flowchart LR
   subgraph Clients
     SW[Swagger UI]
     PM[Postman collection]
-    UI[Optional static dashboard]
   end
   subgraph App["Spring Boot application (single deployable)"]
     F[Security filter chain<br/>JWT validation] --> C[Controllers<br/>REST + validation]
@@ -130,6 +100,7 @@ src/test/java          mirrors main; integration tests extend an AbstractIntegra
 ```
 
 ---
+
 
 ## 6. Database design
 
@@ -272,206 +243,54 @@ Why ordered locks: if A→B and B→A run at the same time and each locks its ow
 
 ---
 
+---
+
 ## 9. Security design
 
-- Passwords: BCrypt via `PasswordEncoder`. Minimum rules enforced by validation.
-- Token: JWT signed with a secret read from the environment variable `JWT_SECRET` (at least 32 random bytes). Expires in 15 minutes. Refresh tokens are out of scope.
-- Roles stored on the user and put in a token claim; `@PreAuthorize("hasRole('ADMIN')")` on admin endpoints.
-- **Ownership check inside the service** for every account operation (the role alone is not enough: a USER must not touch another USER's account).
-- CORS: not needed while everything is served from the same origin.
-- Stateless sessions, CSRF disabled **because** there are no cookies. You must be able to explain that sentence in an interview.
-- Never log passwords, tokens or the secret. Never commit `.env`; commit `.env.example` only.
-- Turn on GitHub secret scanning/push protection and Dependabot for the repo (check current availability in repo settings).
+- **Passwords:** BCrypt via `PasswordEncoder`; validation enforces minimum rules.
+- **Token:** JWT signed with a secret read from `JWT_SECRET` (at least 32 characters, startup fails otherwise). Expires in 15 minutes.
+- **Roles:** stored on the user and carried in a token claim; `@PreAuthorize("hasRole('ADMIN')")` on admin endpoints; `/actuator/**` other than health is admin-only.
+- **Ownership checks inside the service** for every account operation. A role alone is not enough: a `USER` must not touch another `USER`'s account.
+- **Sessions and CSRF:** stateless sessions; CSRF protection is disabled because authentication uses a Bearer header and there are no cookies to forge.
+- **Enumeration resistance:** other users' accounts return 404, and login failures use one message with constant-time-style hashing for unknown emails.
+- **Brute force:** per-email login throttling (HTTP 429), see [ADR 0004](adr/0004-login-throttling.md).
+- **Secrets:** never logged, never committed. `.env.example` holds fake values only. GitHub secret scanning and Dependabot are enabled.
 
----
+## 10. Testing strategy
 
-## 10. Testing strategy (each test ID maps to a requirement)
+Unit tests (Mockito) cover business rules without a database. MockMvc tests exercise the security chain and error format. Integration and concurrency tests run against PostgreSQL 16 in Testcontainers.
 
-| ID | Type | Scenario | Covers |
-|---|---|---|---|
-| T-UNIT-01 | Unit (Mockito) | Withdraw with insufficient funds throws `InsufficientFundsException` | FR-06 |
-| T-UNIT-02 | Unit | Transfer to the same account is rejected | FR-07 |
-| T-UNIT-03 | Unit | Transfer from an account the user does not own is rejected | FR-07 |
-| T-UNIT-04 | Unit | Amount with 3 decimals or zero is rejected | FR-05 |
-| T-API-01 | MockMvc | Register OK, duplicate email 409 | FR-01 |
-| T-API-02 | MockMvc | Login wrong password 401 | FR-02 |
-| T-API-03 | MockMvc | No token on `/accounts` gives 401 | NFR-03 |
-| T-API-04 | MockMvc | USER calling `/admin/accounts` gives 403 | FR-09 |
-| T-API-05 | MockMvc | USER reading another user's account gives 404 | FR-04 |
-| T-API-06 | MockMvc | Invalid body returns the standard error JSON | FR-10 |
-| T-INT-01 | Integration (Testcontainers) | After a series of operations, balance equals sum of ledger entries | NFR-01 |
-| T-INT-02 | Integration | Transfer failing midway leaves both balances unchanged | FR-07 |
-| T-INT-03 | Integration | Frozen account rejects all money operations | FR-09 |
-| T-CON-01 | Concurrency | 50 parallel transfers A→B; final balances and total money are exactly right | NFR-02 |
-| T-CON-02 | Concurrency | Parallel A→B and B→A transfers finish without deadlock | NFR-02 |
-| T-ADV-01 | Integration | Same idempotency key twice creates one transfer | FR-11 |
+| Area | Test classes |
+|---|---|
+| Business rules | `AccountServiceTest`, `TransferServiceTest`, `MoneyTest`, `LedgerSummaryTest`, `LoginAttemptServiceTest` |
+| HTTP and security | `ApiFlowIT`, `LoginThrottleIT` |
+| Ledger integrity, rollback, frozen accounts | `LedgerIntegrityIT` |
+| Concurrency: 50 parallel transfers, opposite-direction transfers | `ConcurrentTransferIT` |
+| Idempotency and daily limit | `AdvancedTransferIT` |
+| Audit trail and immutability | `AuditTrailIT` |
+| Reconciliation | `ReconciliationIT` |
+| Metrics and request ids | `ObservabilityIT` |
+| Layering rules | `ArchitectureTest` |
 
-Rules: run with `./mvnw verify`; generate the JaCoCo report; **write down the real coverage number only after you see it**; do not chase a percentage.
+`mvn verify` runs everything and produces the JaCoCo report at `target/site/jacoco/index.html`.
 
----
+## 11. Deployment
 
-## 11. Optional frontend (Milestone M9, only after M8)
+Docker image (multi-stage, non-root, health check) deployed to Render with a Neon PostgreSQL database; `docker-compose.yml` provides the same stack locally. CI runs `mvn verify` on every push and pull request.
 
-Plain HTML + CSS + JavaScript in `src/main/resources/static/`, served by the same Spring Boot app (no separate hosting, no CORS, no build step).
-
-| Page | Shows | Calls |
+| Variable | Purpose | Secret |
 |---|---|---|
-| `login.html` / `register.html` | Forms | `/auth/*` |
-| `dashboard.html` | My accounts and balances, "open account" | `GET/POST /accounts` |
-| `account.html?id=` | Transaction table with pagination, deposit/withdraw forms | `/accounts/{id}/...` |
-| `transfer.html` | Source account, destination account number, amount | `POST /transfers` |
-| `admin.html` (ADMIN) | All accounts, freeze button | `/admin/...` |
+| `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` | Database connection (`sslmode=require` on Neon) | password: yes |
+| `JWT_SECRET` | Token signing key, 32+ characters | yes |
+| `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Optional initial admin | password: yes |
+| `DAILY_TRANSFER_LIMIT`, `MAX_LOGIN_FAILURES`, `LOCKOUT_SECONDS`, `RECONCILIATION_CRON` | Tunable limits and schedule | no |
 
-Keep the token in memory or `sessionStorage` and say in the README that HttpOnly cookies would be safer. Show server text with `textContent`, never `innerHTML`.
+On the free tier the service sleeps after about 15 minutes idle; the first request afterwards can take about a minute.
 
----
+## 12. Known limitations
 
-## 12. DevOps and deployment
-
-### 12.1 Environment variables
-
-| Name | Example | Secret? |
-|---|---|---|
-| `SPRING_PROFILES_ACTIVE` | `prod` | no |
-| `DB_URL` | `jdbc:postgresql://host:5432/bank?sslmode=require` | no |
-| `DB_USERNAME` / `DB_PASSWORD` | from the database provider | **yes** |
-| `JWT_SECRET` | 32+ random bytes | **yes** |
-| `JAVA_TOOL_OPTIONS` | `-XX:MaxRAMPercentage=70 -XX:+UseSerialGC` | no |
-
-Commit `.env.example` with fake values. Real values live only in the host's dashboard.
-
-### 12.2 Dockerfile outline
-
-Two stages: build with a Maven + JDK 21 image, then run with a JRE 21 image as a **non-root user**, exposing 8080. Add a `HEALTHCHECK` on `/actuator/health`.
-
-### 12.3 docker-compose outline
-
-Two services: `db` (postgres:16 with a volume and a health check) and `app` (built from the Dockerfile, `depends_on` db healthy). `docker compose up` must work from a clean clone.
-
-### 12.4 CI (GitHub Actions) outline
-
-On push and pull request: checkout, set up Temurin JDK 21 with Maven cache, run `./mvnw -B verify` (Testcontainers works on GitHub's Linux runners), upload the JaCoCo report as an artifact, build the Docker image (no push needed at first). Add the status badge to the README.
-
-### 12.5 Deployment architecture (checked 22 Oct 2026; prices change, re-check before you commit)
-
-```mermaid
-flowchart LR
-  U[Recruiter / reviewer] -->|HTTPS| R[Render free web service<br/>Docker image]
-  R -->|SSL| N[(Neon free Postgres)]
-  GH[GitHub repo] -->|auto-deploy on push to main| R
-```
-
-| Option | Findings | Verdict |
-|---|---|---|
-| **Render free web service + Neon free Postgres** | Render's free web service sleeps after 15 min idle and takes about a minute to wake; free Render Postgres **expires after 30 days**, so use Neon instead. Neon's free plan sleeps compute after 5 min idle and has a small storage cap (sources disagree between 0.5 GB and 1 GB; check their plans page). | **Recommended: costs nothing** |
-| Railway | New accounts get a one-time $5 trial credit for 30 days, then a Free plan with $1 per month of credit, or Hobby at $5 per month | Not free for an always-on Java app. My estimate from their per-GB pricing, not a measured result. |
-| Docker Compose only | Free, fully reproducible | Always keep as the fallback |
-
-**Honest consequences:** the first request after idle can take a minute or more. Put that in the README ("demo may need about 60 seconds to wake") so a reviewer is not surprised. Whether the app fits in the free instance's memory is **unverified**; the JVM flags above are the starting point, and you must test it.
-
-### 12.6 Health and logging
-`/actuator/health` exposed publicly, other actuator endpoints off. Log one line per request (method, path, status, duration) without bodies.
-
----
-
-## 13. Proof-of-work checklist (tick only after you personally verified)
-
-| ✔ | Artifact | Location | How anyone verifies | Done when |
-|---|---|---|---|---|
-| ☐ | Public repo with real commit history | GitHub | Open the commit list | Commits are small and meaningful |
-| ☐ | README | `README.md` | Follow it on a clean machine | Setup works in under 10 minutes |
-| ☐ | ER diagram + migrations | `docs/`, `db/migration` | `docker compose up` creates the schema | Matches section 6 |
-| ☐ | OpenAPI/Swagger | `/swagger-ui.html` | Open it | Every endpoint has examples |
-| ☐ | Postman collection with failure cases | `postman/` | Import and run | Success and error cases both pass |
-| ☐ | Unit + integration + concurrency tests | `src/test` | `./mvnw verify` | All T-IDs in section 10 pass |
-| ☐ | Coverage report | CI artifact | Download from a workflow run | Real number recorded, not invented |
-| ☐ | CI green | Actions tab | Click the badge | Last run on `main` is green |
-| ☐ | Docker run | `docker-compose.yml` | `docker compose up` | Works from a clean clone |
-| ☐ | Deployed demo (or reproducible steps) | README link | Open the URL | `/actuator/health` returns UP |
-| ☐ | Design document | `docs/DESIGN.md` | Read it | Explains D1 to D7 and trade-offs |
-| ☐ | Troubleshooting log | `docs/TROUBLESHOOTING.md` | Read it | Only real problems you solved |
-| ☐ | Requirement traceability | `docs/TRACEABILITY.md` | Table | Each FR → code → test → demo step |
-| ☐ | Demo video (2 to 3 min) | README link | Watch it | Shows login, transfer, failure case, test run |
-
----
-
-## 14. Milestones (in order; effort is a rough guess in focused sessions of about 2 to 3 hours)
-
-| M | Goal | Acceptance | Sessions |
-|---|---|---|---|
-| M0 | Audit existing code against this file | Written list: what exists, what runs, what is missing | 1 |
-| M1 | Foundation: Flyway schema, entities, health, CI skeleton | `mvn verify` green in CI | 2 |
-| M2 | Auth: register, login, JWT, roles | T-API-01 to 04 pass | 3 |
-| M3 | Accounts, deposit, withdraw, validation, error handler | FR-03 to 06, FR-10 and related tests pass | 3 |
-| M4 | Atomic transfer + ledger | FR-07, T-UNIT-02/03, T-INT-02 pass | 3 |
-| M5 | Concurrency and integrity tests | T-CON-01/02, T-INT-01 pass | 2 |
-| M6 | History + admin freeze | FR-08, FR-09 pass | 2 |
-| M7 | Docs, Postman, Docker, CI complete | Section 13 rows through "Docker run" ticked | 3 |
-| M8 | Deploy, demo video, design doc, troubleshooting log | Live URL or reproducible steps verified | 2 |
-| M9 | Optional dashboard or advanced features (FR-11, FR-12) | Only if M8 is done | 3 |
-| M10 | Optional: migrate to Spring Boot 4.1 with a migration log | Tests green on 4.1 | 3 |
-
----
-
-## 15. Resume, GitHub and LinkedIn packaging
-
-**Repo name:** `banking-system-spring-boot`
-**Description:** "Simulated banking REST API: JWT security, atomic and concurrency-safe transfers, PostgreSQL, Docker, CI."
-**Topics:** `java`, `spring-boot`, `spring-security`, `jwt`, `postgresql`, `jpa`, `flyway`, `docker`, `junit`, `testcontainers`
-
-**Resume bullet templates: use a bullet only after its proof exists; fill every blank from real results**
-- "Built a REST API for a simulated banking system using Java 21, Spring Boot, Spring Security (JWT) and PostgreSQL." *(needs: running app + repo)*
-- "Implemented transfers inside a single database transaction with ordered row locks and wrote a concurrency test with ___ parallel requests to confirm balances stayed correct." *(needs: T-CON-01 passing, number from the real test)*
-- "Wrote ___ unit and integration tests (JUnit, Mockito, Testcontainers); CI runs them on every push with GitHub Actions." *(needs: real count, green CI)*
-- "Containerised the app with Docker and deployed it to ___." *(needs: working URL)*
-
-**LinkedIn:** add the repo and live link under Featured, and one post describing the transfer-locking decision in your own words.
-
----
-
-## 16. Interview questions this project must let you answer
-
-1. Why `BigDecimal` and not `double`?
-2. What does `@Transactional` do, and when does it roll back?
-3. How do you stop two transfers from corrupting a balance? Why lock in id order?
-4. Pessimistic vs optimistic locking: which and why?
-5. Why return 404 for another user's account instead of 403?
-6. How does JWT validation work, and why is CSRF disabled here?
-7. Why Flyway instead of `ddl-auto=update`?
-8. Why Testcontainers instead of H2?
-9. What is idempotency and why does it matter for payments?
-10. What would you change to scale this to many users? (Be honest about limits.)
-
----
-
-## 17. Known limitations (state these openly in the README)
-
-- Simulated only; no real money, no real compliance.
-- Single instance; no caching or messaging.
+- Simulated only: no real money, no real compliance.
+- Single instance; login throttling is in memory, so it does not span instances.
+- No refresh tokens or multi-factor authentication.
+- Audit log immutability relies on a database trigger; a database owner can remove it. Production would add restricted roles and external log shipping.
 - Free hosting sleeps when idle.
-- Refresh tokens and rate limiting are not implemented.
-
-## 18. If you already have partial code (do first in M0)
-
-Compare your code with this file: Boot version, which tables exist, whether auth exists, whether transfers are transactional, whether any secret is in Git history. If a secret is in history, rotate it first.
-
-## Core Java evidence (job postings ask for this, so make it visible)
-
-Employers such as Ford list collections, exceptions, concurrency and streams. This project should show:
-- **Exceptions:** a custom exception hierarchy (`InsufficientFundsException`, `AccountFrozenException`) mapped to HTTP codes by the global handler.
-- **Concurrency:** T-CON-01/02 use `ExecutorService` and `CountDownLatch` to fire parallel transfers. You must be able to explain what each does.
-- **Collections and streams:** map ledger entries to response DTOs with streams, and group them by type for a small summary in a unit test.
-- **OOP:** an `Account` rule such as "can this account send money?" lives inside the entity or service, not in the controller.
-
-## 19. Plain-English glossary
-
-- **Transaction:** a group of database changes that either all happen or none happen.
-- **Lock (`FOR UPDATE`):** makes other requests wait until you finish with a row.
-- **Deadlock:** two requests each waiting for a row the other holds.
-- **Migration:** a numbered SQL file that changes the database structure in a repeatable way.
-- **JWT:** a signed token the client sends with each request to prove who it is.
-- **Idempotency:** repeating the same request has the same effect as sending it once.
-- **Ledger:** an append-only list of money movements.
-
-## 20. Sources checked (22 Oct 2026)
-Spring Boot support dates: https://eosl.date/eol/product/spring-boot/ · Render free tier: https://render.com/docs/free · Railway plans: https://docs.railway.com/pricing/plans · Neon plans: https://neon.com/docs/introduction/plans

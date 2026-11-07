@@ -21,13 +21,16 @@ public class AuthService {
     private final UserRepository users;
     private final PasswordEncoder encoder;
     private final JwtService jwt;
+    private final LoginAttemptService attempts;
     /** Compared against when the email is unknown, so "no such user" and "wrong password" take similar time. */
     private final String dummyHash;
 
-    public AuthService(UserRepository users, PasswordEncoder encoder, JwtService jwt) {
+    public AuthService(UserRepository users, PasswordEncoder encoder, JwtService jwt,
+                       LoginAttemptService attempts) {
         this.users = users;
         this.encoder = encoder;
         this.jwt = jwt;
+        this.attempts = attempts;
         this.dummyHash = encoder.encode("not-a-real-password");
     }
 
@@ -51,12 +54,16 @@ public class AuthService {
     /** BANK-FR-02. The error never says whether the email or the password was wrong. */
     @Transactional(readOnly = true)
     public LoginResponse login(LoginRequest request) {
-        User user = users.findByEmail(normalize(request.email())).orElse(null);
+        String email = normalize(request.email());
+        attempts.assertNotBlocked(email);
+        User user = users.findByEmail(email).orElse(null);
         String hash = user != null ? user.getPasswordHash() : dummyHash;
         boolean matches = encoder.matches(request.password(), hash);
         if (user == null || !matches) {
+            attempts.recordFailure(email);
             throw new UnauthorizedException("Invalid email or password");
         }
+        attempts.recordSuccess(email);
         return new LoginResponse(jwt.issue(user), "Bearer", jwt.expirySeconds());
     }
 
