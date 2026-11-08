@@ -9,6 +9,8 @@ A REST backend for a simulated retail bank, built with Java 21, Spring Boot and 
 
 > Fictional data only. Currency INR. No real money and no real bank APIs.
 
+**Live demo:** https://banksim-loqm.onrender.com (free hosting: the first request after an idle period can take about a minute). Use **Start with a demo customer** to try it, or open the [API documentation](https://banksim-loqm.onrender.com/swagger-ui.html).
+
 ## Business problem and how it is addressed
 
 | Risk in a banking system | Business impact | Control in BankSim |
@@ -25,6 +27,7 @@ A REST backend for a simulated retail bank, built with Java 21, Spring Boot and 
 
 ## Features
 
+- **Web app:** a browser UI served by the same application (no separate frontend build): sign in, accounts, passbook-style history, deposit, withdraw, transfer, an operations screen for administrators (freeze, audit trail, reconciliation), and a live **API activity** panel that shows each request with its `X-Request-Id`.
 - **Accounts and money movement:** register, login, open savings or current accounts, deposit, withdraw, transfer by account number, paginated and filterable history.
 - **Safety:** `NUMERIC(19,2)` and `BigDecimal` for money, a database `CHECK (balance >= 0)` as a last safety net, a ledger entry for every movement, daily transfer limit.
 - **Security:** Spring Security 6 with stateless JWT (OAuth2 Resource Server), `USER` and `ADMIN` roles, admin-only operational endpoints.
@@ -57,10 +60,11 @@ docker compose up --build
 
 | | URL |
 |---|---|
+| Web app | http://localhost:8080/ |
 | Swagger UI | http://localhost:8080/swagger-ui.html |
 | Health | http://localhost:8080/actuator/health |
 
-**Try it:** call `POST /api/v1/auth/register` and `POST /api/v1/auth/login`, click **Authorize** in Swagger UI with the returned `accessToken`, open two accounts, deposit and transfer. As admin you can also call `GET /api/v1/admin/audit-events` and `GET /api/v1/admin/reconciliation`. A scripted walkthrough is in `scripts/smoke-test.sh` (needs `curl` and `jq`), and `postman/banksim.postman_collection.json` contains success and failure cases.
+**Try it:** open the web app and choose **Start with a demo customer**. Or use the API directly: call `POST /api/v1/auth/register` and `POST /api/v1/auth/login`, click **Authorize** in Swagger UI with the returned `accessToken`, open two accounts, deposit and transfer. As admin you can also call `GET /api/v1/admin/audit-events` and `GET /api/v1/admin/reconciliation`. A scripted walkthrough is in `scripts/smoke-test.sh` (needs `curl` and `jq`), and `postman/banksim.postman_collection.json` contains success and failure cases.
 
 <details>
 <summary>Run without Docker</summary>
@@ -115,7 +119,7 @@ Client -> Security filter chain (JWT) -> Controllers -> Services (@Transactional
                                               \-> Audit and metrics aspects (AOP)
 ```
 
-Controllers never access repositories; services own business rules and transaction boundaries. Code is organised by feature: `auth`, `user`, `account`, `transaction`, `transfer`, `audit`, `reconciliation`, `observability`, with shared code in `common` and `config`. These layering rules are enforced by `ArchitectureTest`.
+The web app is plain HTML, CSS and JavaScript in `src/main/resources/static`, calling the same REST API. Controllers never access repositories; services own business rules and transaction boundaries. Code is organised by feature: `auth`, `user`, `account`, `transaction`, `transfer`, `audit`, `reconciliation`, `observability`, with shared code in `common` and `config`. These layering rules are enforced by `ArchitectureTest`.
 
 | Decision | Reason |
 |---|---|
@@ -149,6 +153,7 @@ Coverage report: `target/site/jacoco/index.html`.
 | Reconciliation detects tampering | `ReconciliationIT` |
 | Metrics and request ids | `ObservabilityIT` |
 | Layering rules | `ArchitectureTest` |
+| Web app files served without a token | `StaticAppIT` |
 
 `scripts/verify-locking.sh` reproduces the deadlock comparison against a local PostgreSQL.
 
